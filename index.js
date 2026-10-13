@@ -4,8 +4,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // ========== 填入你的应用信息 ==========
-const APP_KEY = "6liekctig46mj";
-const APP_SECRET = "在这里粘贴你的AppSecret";
+const APP_KEY = "6lifb7a73ip11";
+const APP_SECRET = "182fc26d53ea35956c65529888e2cf45841161c1";
 const REDIRECT_URI = "https://tiktok-render-callback.onrender.com/callback";
 // ======================================
 

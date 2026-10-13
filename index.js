@@ -40,9 +40,11 @@ app.post('/api/token', async (req, res) => {
 
 // 【关键】通用API代理（Open API走tiktokglobalshop.com）
 app.post('/api/proxy', async (req, res) => {
-  const { path, access_token, shop_id, method = 'POST', body = {} } = req.body;
+  const { path, access_token, shop_id, method = 'POST', body = {}, timestamp, sign } = req.body;
   try {
-    const url = `https://open-api.tiktokglobalshop.com${path}?app_key=${APP_KEY}`;
+    let url = `https://open-api.tiktokglobalshop.com${path}?app_key=${APP_KEY}`;
+    if (timestamp) url += `&timestamp=${timestamp}`;
+    if (sign) url += `&sign=${sign}`;
     const headers = {
       'x-tts-access-token': access_token,
       'Content-Type': 'application/json',

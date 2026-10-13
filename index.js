@@ -43,14 +43,15 @@ app.post('/api/proxy', async (req, res) => {
   const { path, access_token, shop_id, method = 'POST', body = {} } = req.body;
   try {
     const url = `https://open-api.tiktokglobalshop.com${path}?app_key=${APP_KEY}`;
+    const headers = {
+      'x-tts-access-token': access_token,
+      'Content-Type': 'application/json',
+    };
+    if (shop_id) headers['x-tts-shop-id'] = shop_id;
     const resp = await axios({
       method,
       url,
-      headers: {
-        'x-tts-access-token': access_token,
-        'x-tts-shop-id': shop_id,
-        'Content-Type': 'application/json',
-      },
+      headers,
       data: method === 'POST' ? body : undefined,
       validateStatus: () => true,
     });

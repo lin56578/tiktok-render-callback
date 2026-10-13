@@ -18,10 +18,10 @@ app.post('/api/token', async (req, res) => {
   try {
     let url, payload;
     if (refresh_token) {
-      url = 'https://auth.tiktokshops.com/api/v2/refresh_token';
+      url = 'https://auth.tiktok-shops.com/api/v2/refresh_token';
       payload = { app_key: APP_KEY, app_secret: APP_SECRET, grant_type: 'refresh_token', refresh_token };
     } else {
-      url = 'https://auth.tiktokshops.com/api/v2/token';
+      url = 'https://auth.tiktok-shops.com/api/v2/token';
       payload = { app_key: APP_KEY, app_secret: APP_SECRET, code, grant_type: 'authorized_code', redirect_uri: REDIRECT_URI };
     }
     const resp = await axios.post(url, payload);
@@ -36,7 +36,7 @@ app.post('/api/token', async (req, res) => {
 app.post('/api/proxy', async (req, res) => {
   const { path, access_token, shop_id, method = 'POST', body = {} } = req.body;
   try {
-    const url = `https://openapi.tiktokshops.com${path}?app_key=${APP_KEY}`;
+    const url = `https://openapi.tiktok-shops.com${path}?app_key=${APP_KEY}`;
     const resp = await axios({
       method,
       url,
@@ -60,7 +60,7 @@ app.get('/callback', async (req, res) => {
   const state = req.query.state;
   if (!code) return res.send("缺少code参数");
   try {
-    const resp = await axios.post('https://auth.tiktokshops.com/api/v2/token', {
+    const resp = await axios.post('https://auth.tiktok-shops.com/api/v2/token', {
       app_key: APP_KEY,
       app_secret: APP_SECRET,
       code,

@@ -1,87 +1,164 @@
+/**
+ * TikTok 中转服务（多 app 版）
+ *
+ * 部署在 Render 上，作用：纯转发到 TikTok 官方 API，不存储任何 app_secret。
+ * 所有签名由本地 ERP 算好后传过来，本服务只负责 HTTP 转发（解决国内访问不到 TikTok 的问题）。
+ *
+ * 接口：
+ *   POST /api/token  —— 换 token / 刷新 token
+ *   POST /api/proxy  —— 业务 API 转发
+ *   GET  /           —— 健康检查
+ *
+ * 部署：Render → New Web Service → 选 Node.js → 上传本文件 → Start Command: node index.js
+ */
+
 const express = require('express');
-const axios = require('axios');
+const cors = require('cors');
+const https = require('https');
+
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json({ limit: '5mb' }));
 
-app.use(express.json());
+const TIKTOK_AUTH_HOST = 'auth.tiktok-shops.com';
+const TIKTOK_API_HOST = 'open-api.tiktok.shop';
 
-// ========== 应用配置 ==========
-const APP_KEY = "6lifb7a73ip11";
-const APP_SECRET = "182fc26d53ea35956c65529888e2cf45841161c1";
-const REDIRECT_URI = "https://my666.free.idcfengye.com/callback";
-// ==============================
-
-// 【关键】GET方式 code换token（按官方文档）
-app.post('/api/token', async (req, res) => {
-  const { code, refresh_token } = req.body;
-  try {
-    let url;
-    if (refresh_token) {
-      // 刷新token
-      url = 'https://auth.tiktok-shops.com/api/v2/token/refresh?'
-        + `app_key=${APP_KEY}&app_secret=${APP_SECRET}&grant_type=refresh_token&refresh_token=${refresh_token}`;
-    } else {
-      // code换token（GET请求，参数名auth_code）
-      url = 'https://auth.tiktok-shops.com/api/v2/token/get?'
-        + `app_key=${APP_KEY}&app_secret=${APP_SECRET}&auth_code=${code}&grant_type=authorized_code`;
-    }
-    console.log('Token URL:', url.replace(APP_SECRET, '***'));
-    const resp = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      validateStatus: () => true,
+// 简单 POST 转发工具
+function forwardPost(host, path, queryParams, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const qs = new URLSearchParams(queryParams).toString();
+    const options = {
+      hostname: host,
+      path: path + (qs ? '?' + qs : ''),
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          resolve({ code: -1, message: 'Render 中转响应解析失败: ' + data });
+        }
+      });
     });
-    console.log('Token response:', resp.status, JSON.stringify(resp.data).substring(0, 200));
-    res.json(resp.data);
-  } catch (err) {
-    console.error('Token error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+    req.on('error', (e) => reject(e));
+    req.write(JSON.stringify(bodyObj || {}));
+    req.end();
+  });
+}
 
-// 【关键】通用API代理（Open API走tiktokglobalshop.com）
-app.post('/api/proxy', async (req, res) => {
-  const { path, access_token, shop_cipher, method = 'POST', body = {}, query_params = {}, timestamp, sign } = req.body;
-  try {
-    let url = `https://open-api.tiktokglobalshop.com${path}?app_key=${APP_KEY}`;
-    if (timestamp) url += `&timestamp=${timestamp}`;
-    if (sign) url += `&sign=${sign}`;
-    // 拼query参数
-    for (const [k, v] of Object.entries(query_params)) {
-      url += `&${k}=${encodeURIComponent(v)}`;
-    }
-    // shop_cipher作为query参数
-    if (shop_cipher) url += `&shop_cipher=${encodeURIComponent(shop_cipher)}`;
+// 通用转发（支持 GET/POST/PUT/DELETE）
+function forwardRequest(host, path, method, queryParams, bodyObj, accessToken) {
+  return new Promise((resolve, reject) => {
+    const qs = new URLSearchParams(queryParams).toString();
     const headers = {
-      'x-tts-access-token': access_token,
       'Content-Type': 'application/json',
     };
-    const resp = await axios({
-      method,
-      url,
+    if (accessToken) {
+      headers['x-tts-access-token'] = accessToken;
+    }
+    const options = {
+      hostname: host,
+      path: path + (qs ? '?' + qs : ''),
+      method: method,
       headers,
-      data: method === 'POST' ? body : undefined,
-      validateStatus: () => true,
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          resolve({ code: -1, message: 'Render 中转响应解析失败: ' + data });
+        }
+      });
     });
-    res.json(resp.data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    req.on('error', (e) => reject(e));
+    if (method !== 'GET' && bodyObj) {
+      req.write(JSON.stringify(bodyObj));
+    }
+    req.end();
+  });
+}
+
+// 健康检查
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'tiktok-proxy-multi-app', time: new Date().toISOString() });
 });
 
-// OAuth回调页面（浏览器跳转用）
-app.get('/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.send("缺少code参数");
+/**
+ * POST /api/token
+ * 入参（本地 ERP 算好签名后传过来）：
+ *   app_key, sign, timestamp, grant_type, code 或 refresh_token
+ * 转发到 https://auth.tiktok-shops.com/oauth/token
+ */
+app.post('/api/token', async (req, res) => {
   try {
-    const url = 'https://auth.tiktok-shops.com/api/v2/token/get?'
-      + `app_key=${APP_KEY}&app_secret=${APP_SECRET}&auth_code=${code}&grant_type=authorized_code`;
-    const resp = await axios.get(url, { validateStatus: () => true });
-    res.send(`<h2>Token结果</h2><pre>${JSON.stringify(resp.data, null, 2)}</pre>`);
-  } catch (err) {
-    res.send(`<h2>失败</h2><pre>${err.message}</pre>`);
+    const { app_key, sign, timestamp, grant_type, code, refresh_token } = req.body;
+    if (!app_key || !sign || !timestamp) {
+      return res.json({ code: -1, message: '缺少 app_key/sign/timestamp' });
+    }
+    const query = {
+      app_key,
+      sign,
+      timestamp,
+      grant_type,
+    };
+    if (code) query.code = code;
+    if (refresh_token) query.refresh_token = refresh_token;
+
+    const result = await forwardPost(TIKTOK_AUTH_HOST, '/oauth/token', query, {});
+    res.json(result);
+  } catch (e) {
+    res.json({ code: -1, message: 'Render 中转异常: ' + e.message });
   }
 });
 
-app.get('/', (req, res) => res.send('TikTok API Proxy Running'));
+/**
+ * POST /api/proxy
+ * 入参（本地 ERP 算好签名后传过来）：
+ *   app_key, sign, timestamp, path, method, access_token, shop_cipher, query_params, body
+ * 转发到 https://open-api.tiktok.shop{path}
+ */
+app.post('/api/proxy', async (req, res) => {
+  try {
+    const {
+      app_key, sign, timestamp, path, method,
+      access_token, shop_cipher, query_params, body,
+    } = req.body;
+    if (!app_key || !sign || !timestamp || !path) {
+      return res.json({ code: -1, message: '缺少必要参数' });
+    }
+    const query = {
+      app_key,
+      sign,
+      timestamp,
+    };
+    if (shop_cipher) query.shop_cipher = shop_cipher;
+    // 合并业务 query 参数
+    Object.assign(query, query_params || {});
 
-app.listen(port, () => console.log(`Proxy on port ${port}`));
+    const result = await forwardRequest(
+      TIKTOK_API_HOST,
+      path,
+      method || 'GET',
+      query,
+      body || {},
+      access_token
+    );
+    res.json(result);
+  } catch (e) {
+    res.json({ code: -1, message: 'Render 中转异常: ' + e.message });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`TikTok proxy (multi-app) listening on port ${PORT}`);
+});

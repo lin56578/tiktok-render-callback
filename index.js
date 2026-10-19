@@ -91,7 +91,8 @@ app.get('/', (req, res) => {
 /**
  * POST /api/token
  * 入参：app_key, app_secret, code 或 refresh_token, grant_type
- * 转发到 https://auth.tiktok-shops.com/api/v2/token/get
+ * 换 token：GET https://auth.tiktok-shops.com/api/v2/token/get
+ * 刷新 token：GET https://auth.tiktok-shops.com/api/v2/token/refresh
  */
 app.post('/api/token', async (req, res) => {
   try {
@@ -99,15 +100,17 @@ app.post('/api/token', async (req, res) => {
     if (!app_key || !app_secret) {
       return res.json({ code: -1, message: '缺少 app_key/app_secret' });
     }
+    const isRefresh = grant_type === 'refresh_token';
+    const path = isRefresh ? '/api/v2/token/refresh' : '/api/v2/token/get';
     const query = {
       app_key,
       app_secret,
-      grant_type: grant_type || 'authorized_code',
+      grant_type,
     };
     if (code) query.auth_code = code;
     if (refresh_token) query.refresh_token = refresh_token;
 
-    const result = await forwardGet(TIKTOK_AUTH_HOST, '/api/v2/token/get', query);
+    const result = await forwardGet(TIKTOK_AUTH_HOST, path, query);
     res.json(result);
   } catch (e) {
     res.json({ code: -1, message: 'Render 中转异常: ' + e.message });

@@ -20,7 +20,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
-const TIKTOK_AUTH_HOST = 'auth.tiktok-shops.com';
 const TIKTOK_API_HOST = 'open-api.tiktok.shop';
 
 // 简单 POST 转发工具
@@ -113,7 +112,7 @@ app.post('/api/token', async (req, res) => {
     if (code) query.code = code;
     if (refresh_token) query.refresh_token = refresh_token;
 
-    const result = await forwardPost(TIKTOK_AUTH_HOST, '/oauth/token', query, {});
+    const result = await forwardPost(TIKTOK_API_HOST, '/oauth/token', query, {});
     res.json(result);
   } catch (e) {
     res.json({ code: -1, message: 'Render 中转异常: ' + e.message });

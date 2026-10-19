@@ -1,15 +1,13 @@
 /**
  * TikTok 中转服务（多 app 版）
  *
- * 部署在 Render 上，作用：纯转发到 TikTok 官方 API，不存储任何 app_secret。
- * 所有签名由本地 ERP 算好后传过来，本服务只负责 HTTP 转发（解决国内访问不到 TikTok 的问题）。
+ * 部署在 Render 上，作用：纯转发到 TikTok 官方 API。
+ * 本地 ERP 从数据库读 app_key/app_secret 后传给本服务，本服务不存储任何凭据。
  *
  * 接口：
  *   POST /api/token  —— 换 token / 刷新 token
  *   POST /api/proxy  —— 业务 API 转发
  *   GET  /           —— 健康检查
- *
- * 部署：Render → New Web Service → 选 Node.js → 上传本文件 → Start Command: node index.js
  */
 
 const express = require('express');
@@ -20,16 +18,17 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
-const TIKTOK_API_HOST = 'open-api.tiktok.shop';
+const TIKTOK_AUTH_HOST = 'auth.tiktok-shops.com';
+const TIKTOK_API_HOST = 'open-api.tiktokglobalshop.com';
 
-// 简单 POST 转发工具
-function forwardPost(host, path, queryParams, bodyObj) {
+// 简单 GET 请求工具（token 接口是 GET）
+function forwardGet(host, path, queryParams) {
   return new Promise((resolve, reject) => {
     const qs = new URLSearchParams(queryParams).toString();
     const options = {
       hostname: host,
       path: path + (qs ? '?' + qs : ''),
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -46,7 +45,6 @@ function forwardPost(host, path, queryParams, bodyObj) {
       });
     });
     req.on('error', (e) => reject(e));
-    req.write(JSON.stringify(bodyObj || {}));
     req.end();
   });
 }
@@ -86,33 +84,30 @@ function forwardRequest(host, path, method, queryParams, bodyObj, accessToken) {
   });
 }
 
-// 健康检查
 app.get('/', (req, res) => {
   res.json({ ok: true, service: 'tiktok-proxy-multi-app', time: new Date().toISOString() });
 });
 
 /**
  * POST /api/token
- * 入参（本地 ERP 算好签名后传过来）：
- *   app_key, sign, timestamp, grant_type, code 或 refresh_token
- * 转发到 https://auth.tiktok-shops.com/oauth/token
+ * 入参：app_key, app_secret, code 或 refresh_token, grant_type
+ * 转发到 https://auth.tiktok-shops.com/api/v2/token/get
  */
 app.post('/api/token', async (req, res) => {
   try {
-    const { app_key, sign, timestamp, grant_type, code, refresh_token } = req.body;
-    if (!app_key || !sign || !timestamp) {
-      return res.json({ code: -1, message: '缺少 app_key/sign/timestamp' });
+    const { app_key, app_secret, code, refresh_token, grant_type } = req.body;
+    if (!app_key || !app_secret) {
+      return res.json({ code: -1, message: '缺少 app_key/app_secret' });
     }
     const query = {
       app_key,
-      sign,
-      timestamp,
-      grant_type,
+      app_secret,
+      grant_type: grant_type || 'authorized_code',
     };
-    if (code) query.code = code;
+    if (code) query.auth_code = code;
     if (refresh_token) query.refresh_token = refresh_token;
 
-    const result = await forwardPost(TIKTOK_API_HOST, '/oauth/token', query, {});
+    const result = await forwardGet(TIKTOK_AUTH_HOST, '/api/v2/token/get', query);
     res.json(result);
   } catch (e) {
     res.json({ code: -1, message: 'Render 中转异常: ' + e.message });
@@ -121,24 +116,21 @@ app.post('/api/token', async (req, res) => {
 
 /**
  * POST /api/proxy
- * 入参（本地 ERP 算好签名后传过来）：
- *   app_key, sign, timestamp, path, method, access_token, shop_cipher, query_params, body
- * 转发到 https://open-api.tiktok.shop{path}
+ * 入参：app_key, sign, timestamp, path, method, access_token, shop_cipher, query_params, body
+ * 转发到 https://open-api.tiktokglobalshop.com{path}
  */
 app.post('/api/proxy', async (req, res) => {
   try {
     const {
-      app_key, sign, timestamp, path, method,
-      access_token, shop_cipher, query_params, body,
+      app_key, sign, timestamp, path, method, access_token, shop_cipher, query_params, body,
     } = req.body;
-    if (!app_key || !sign || !timestamp || !path) {
-      return res.json({ code: -1, message: '缺少必要参数' });
+    if (!path) {
+      return res.json({ code: -1, message: '缺少 path' });
     }
-    const query = {
-      app_key,
-      sign,
-      timestamp,
-    };
+    const query = {};
+    if (app_key) query.app_key = app_key;
+    if (sign) query.sign = sign;
+    if (timestamp) query.timestamp = timestamp;
     if (shop_cipher) query.shop_cipher = shop_cipher;
     // 合并业务 query 参数
     Object.assign(query, query_params || {});

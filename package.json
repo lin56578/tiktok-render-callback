@@ -1,13 +1,13 @@
 {
-  "name": "tiktok-render-callback",
-  "version": "1.0.0",
-  "description": "",
+  "name": "tiktok-proxy-multi-app",
+  "version": "2.0.0",
+  "description": "TikTok Open API 中转服务（多 app 纯转发版，不存储任何 secret）",
   "main": "index.js",
-  "dependencies": {
-    "express": "^4.18.2",
-    "axios": "^1.7.0"
-  },
   "scripts": {
     "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "cors": "^2.8.5"
   }
 }
